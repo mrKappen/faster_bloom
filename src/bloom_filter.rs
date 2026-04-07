@@ -58,7 +58,6 @@ impl BloomFilter {
     /// check if item is likely present
     pub fn is_present<T: Hash>(&self, item: T) -> bool {
         let indices = self.get_indices(item);
-        println!("{:?}", indices);
         for index in indices {
             if !self.bits[index as usize] {
                 return false;
