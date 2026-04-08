@@ -1,5 +1,5 @@
 [package]
-name = "bloom_filter"
+name = "kool_bloom_filter"
 version = "0.1.0"
 edition = "2024"
 description = "A standard and scalable Bloom filter implementation in Rust with configurable error tolerance and automatic scaling"
