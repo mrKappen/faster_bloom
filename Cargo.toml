@@ -2,6 +2,12 @@
 name = "bloom_filter"
 version = "0.1.0"
 edition = "2024"
+description = "A standard and scalable Bloom filter implementation in Rust with configurable error tolerance and automatic scaling"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/mrKappen/bloom_filter.git"
+keywords = ["bloom-filter", "probabilistic", "data-structures", "hash", "scalable"]
+categories = ["data-structures", "algorithms"]
 
 [dependencies]
 rand = "0.10.0"
