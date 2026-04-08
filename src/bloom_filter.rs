@@ -2,12 +2,22 @@ use rand::RngExt;
 use siphasher::sip128::SipHasher;
 use std::hash::{Hash, Hasher};
 
+///Status code
+pub enum StatusCode {
+    /// filter Full
+    FULL,
+
+    ///insert was successful
+    SUCCESS,
+}
+
 /// Bloom filter struct
 pub struct BloomFilter {
     bits: Vec<bool>,
     hashers: Vec<SipHasher>,
     capacity: u128,
     error_tolerance: f32,
+    num_inserts: u128,
 }
 
 impl BloomFilter {
@@ -43,16 +53,22 @@ impl BloomFilter {
             hashers,
             capacity,
             error_tolerance,
+            num_inserts: 0,
         }
     }
 
     /// insert item into bloom filter
-    pub fn insert<T: Hash>(&mut self, item: T) {
+    pub fn insert<T: Hash>(&mut self, item: T) -> StatusCode {
+        if self.get_num_inserts() >= self.get_capacity() {
+            return StatusCode::FULL;
+        }
         let indices = self.get_indices(item);
         // set flags to true
         for index in indices {
             self.bits[index as usize] = true;
         }
+        self.num_inserts += 1;
+        StatusCode::SUCCESS
     }
 
     /// check if item is likely present
@@ -70,7 +86,7 @@ impl BloomFilter {
         let mut indices: Vec<u64> = Vec::new();
         let k: u64 = self.bits.len() as u64;
         for h in &self.hashers {
-            let mut hasher = h.clone();
+            let mut hasher = *h;
             item.hash(&mut hasher);
 
             let index = hasher.finish() % k;
@@ -81,13 +97,18 @@ impl BloomFilter {
     }
 
     /// get error tolerance
-    pub fn error(&self) -> f32 {
+    pub fn get_error_tolerance(&self) -> f32 {
         self.error_tolerance
     }
 
     /// get configured capacity
-    pub fn capacity(&self) -> u128 {
+    pub fn get_capacity(&self) -> u128 {
         self.capacity
+    }
+
+    /// get number of inserts
+    pub fn get_num_inserts(&self) -> u128 {
+        self.num_inserts
     }
 }
 
@@ -97,12 +118,12 @@ impl BloomFilter {
 fn get_m(error: f32, capacity: u128) -> u128 {
     let ln_e = error.ln();
     let denomenator = (2f32.ln()).powf(2f32);
-    let m: f32 = -1f32 * (((capacity as f32) * ln_e) / denomenator);
+    let m: f32 = -(((capacity as f32) * ln_e) / denomenator);
     m.ceil() as u128
 }
 
 fn get_k(error: f32) -> u128 {
-    (-1f32 * error.log2()).ceil() as u128
+    (-error.log2()).ceil() as u128
 }
 
 #[cfg(test)]
@@ -112,8 +133,8 @@ mod tests {
     #[test]
     fn test_basic_not_present() {
         let mut bf = BloomFilter::new(1000, 0.01);
-        assert_eq!(bf.error(), 0.01);
-        assert_eq!(bf.capacity(), 1000);
+        assert_eq!(bf.get_error_tolerance(), 0.01);
+        assert_eq!(bf.get_capacity(), 1000);
 
         let key = "hello world";
         bf.insert(key);
@@ -137,8 +158,8 @@ mod tests {
     #[test]
     fn test_new_creates_filter() {
         let bf = BloomFilter::new(1000, 0.01);
-        assert_eq!(bf.error(), 0.01);
-        assert_eq!(bf.capacity(), 1000);
+        assert_eq!(bf.get_error_tolerance(), 0.01);
+        assert_eq!(bf.get_capacity(), 1000);
     }
 
     #[test]
