@@ -2,13 +2,13 @@ use rand::RngExt;
 use siphasher::sip128::SipHasher;
 use std::hash::{Hash, Hasher};
 
-///Status code
-pub enum StatusCode {
+///Error code
+#[derive(Debug)]
+pub enum ErrCode {
     /// filter Full
-    FULL,
-
-    ///insert was successful
-    SUCCESS,
+    Full,
+    /// Bad input provided
+    BadInput,
 }
 
 /// Bloom filter struct
@@ -22,20 +22,20 @@ pub struct BloomFilter {
 
 impl BloomFilter {
     /// create bloom filter object
-    pub fn new(capacity: u128, error_tolerance: f32) -> Self {
+    pub fn new(capacity: u128, error_tolerance: f32) -> Result<Self, ErrCode> {
         if error_tolerance <= 0f32 || error_tolerance > 1.0 {
-            panic!("Invalid error threshold")
+            return Err(ErrCode::BadInput);
         }
 
         if capacity == 0 {
-            panic!("Invalid capacity")
+            return Err(ErrCode::BadInput);
         }
 
         let m = get_m(error_tolerance, capacity);
         let k = get_k(error_tolerance);
 
         if k == 0 {
-            panic!("Error threshold too high.")
+            return Err(ErrCode::BadInput);
         }
 
         let bits = vec![false; m as usize];
@@ -48,19 +48,19 @@ impl BloomFilter {
             hashers.push(hasher);
         }
 
-        Self {
+        Ok(Self {
             bits,
             hashers,
             capacity,
             error_tolerance,
             num_inserts: 0,
-        }
+        })
     }
 
     /// insert item into bloom filter
-    pub fn insert<T: Hash>(&mut self, item: T) -> StatusCode {
+    pub fn insert<T: Hash>(&mut self, item: T) -> Result<(), ErrCode> {
         if self.get_num_inserts() >= self.get_capacity() {
-            return StatusCode::FULL;
+            return Err(ErrCode::Full);
         }
         let indices = self.get_indices(item);
         // set flags to true
@@ -68,7 +68,7 @@ impl BloomFilter {
             self.bits[index as usize] = true;
         }
         self.num_inserts += 1;
-        StatusCode::SUCCESS
+        Ok(())
     }
 
     /// check if item is likely present
@@ -132,14 +132,14 @@ mod tests {
 
     #[test]
     fn test_basic_not_present() {
-        let mut bf = BloomFilter::new(1000, 0.01);
+        let mut bf = BloomFilter::new(1000, 0.01).unwrap();
         assert_eq!(bf.get_error_tolerance(), 0.01);
         assert_eq!(bf.get_capacity(), 1000);
 
         let key = "hello world";
-        bf.insert(key);
-        assert!(bf.is_present("good bye") == false);
-        assert!(bf.is_present(key) == true);
+        bf.insert(key).unwrap();
+        assert!(!bf.is_present("good bye"));
+        assert!(bf.is_present(key));
     }
 
     #[test]
@@ -157,48 +157,43 @@ mod tests {
 
     #[test]
     fn test_new_creates_filter() {
-        let bf = BloomFilter::new(1000, 0.01);
+        let bf = BloomFilter::new(1000, 0.01).unwrap();
         assert_eq!(bf.get_error_tolerance(), 0.01);
         assert_eq!(bf.get_capacity(), 1000);
     }
 
     #[test]
-    #[should_panic(expected = "Invalid capacity")]
-    fn test_new_panics_on_zero_capacity() {
-        BloomFilter::new(0, 0.01);
+    fn test_new_err_on_zero_capacity() {
+        assert!(BloomFilter::new(0, 0.01).is_err());
     }
 
     #[test]
-    #[should_panic(expected = "Invalid error threshold")]
-    fn test_new_panics_on_zero_error() {
-        BloomFilter::new(100, 0.0);
+    fn test_new_err_on_zero_error() {
+        assert!(BloomFilter::new(100, 0.0).is_err());
     }
 
     #[test]
-    #[should_panic(expected = "Invalid error threshold")]
-    fn test_new_panics_on_negative_error() {
-        BloomFilter::new(100, -0.5);
+    fn test_new_err_on_negative_error() {
+        assert!(BloomFilter::new(100, -0.5).is_err());
     }
 
     #[test]
-    #[should_panic(expected = "Invalid error threshold")]
-    fn test_new_panics_on_error_greater_than_one() {
-        BloomFilter::new(100, 1.5);
+    fn test_new_err_on_error_greater_than_one() {
+        assert!(BloomFilter::new(100, 1.5).is_err());
     }
 
     #[test]
-    #[should_panic(expected = "Error threshold too high.")]
-    fn test_new_panics_on_error_tolerance_one() {
+    fn test_new_err_on_error_tolerance_one() {
         // get_k(1.0) = ceil(-log2(1.0)) = 0, which triggers the k == 0 check
-        BloomFilter::new(100, 1.0);
+        assert!(BloomFilter::new(100, 1.0).is_err());
     }
 
     #[test]
     fn test_insert_and_check_present() {
-        let mut bf = BloomFilter::new(1000, 0.01);
+        let mut bf = BloomFilter::new(1000, 0.01).unwrap();
         let items = vec!["apple", "banana", "cherry", "date", "elderberry"];
         for item in &items {
-            bf.insert(item);
+            bf.insert(item).unwrap();
         }
         for item in &items {
             assert!(bf.is_present(item), "Expected '{}' to be present", item);
@@ -207,9 +202,9 @@ mod tests {
 
     #[test]
     fn test_no_false_negatives() {
-        let mut bf = BloomFilter::new(1000, 0.01);
+        let mut bf = BloomFilter::new(1000, 0.01).unwrap();
         for i in 0..500 {
-            bf.insert(i);
+            bf.insert(i).unwrap();
         }
         for i in 0..500 {
             assert!(
@@ -222,7 +217,7 @@ mod tests {
 
     #[test]
     fn test_empty_filter_reports_not_present() {
-        let bf = BloomFilter::new(1000, 0.01);
+        let bf = BloomFilter::new(1000, 0.01).unwrap();
         assert!(!bf.is_present("hello"));
         assert!(!bf.is_present(42));
         assert!(!bf.is_present(vec![1, 2, 3]));
@@ -231,9 +226,9 @@ mod tests {
 
     #[test]
     fn test_not_present_for_missing_items() {
-        let mut bf = BloomFilter::new(1000, 0.05);
+        let mut bf = BloomFilter::new(1000, 0.05).unwrap();
         for i in 0..100 {
-            bf.insert(format!("inserted_{}", i));
+            bf.insert(format!("inserted_{}", i)).unwrap();
         }
         let mut false_positives = 0;
         for i in 0..1000 {
@@ -253,18 +248,18 @@ mod tests {
 
     #[test]
     fn test_insert_different_types() {
-        let mut int_filter = BloomFilter::new(500, 0.01);
+        let mut int_filter = BloomFilter::new(500, 0.01).unwrap();
         for i in 0u64..10 {
-            int_filter.insert(i);
+            int_filter.insert(i).unwrap();
         }
         for i in 0u64..10 {
             assert!(int_filter.is_present(i));
         }
 
-        let mut str_filter = BloomFilter::new(500, 0.01);
+        let mut str_filter = BloomFilter::new(500, 0.01).unwrap();
         let words = vec!["rust", "bloom", "filter", "hash"];
         for w in &words {
-            str_filter.insert(w);
+            str_filter.insert(w).unwrap();
         }
         for w in &words {
             assert!(str_filter.is_present(w));
@@ -273,10 +268,10 @@ mod tests {
 
     #[test]
     fn test_duplicate_insert() {
-        let mut bf = BloomFilter::new(100, 0.01);
-        bf.insert("duplicate");
-        bf.insert("duplicate");
-        bf.insert("duplicate");
+        let mut bf = BloomFilter::new(100, 0.01).unwrap();
+        bf.insert("duplicate").unwrap();
+        bf.insert("duplicate").unwrap();
+        bf.insert("duplicate").unwrap();
         assert!(bf.is_present("duplicate"));
     }
 }

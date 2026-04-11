@@ -1,4 +1,4 @@
-use crate::bloom_filter::{BloomFilter, StatusCode};
+use crate::bloom_filter::{BloomFilter, ErrCode};
 use std::hash::Hash;
 
 /// Define a bloom filter that automatically scales
@@ -11,30 +11,33 @@ pub struct ScalableBloomFilter {
 const STARTING_CAPACITY: u128 = 10_000;
 impl ScalableBloomFilter {
     /// create scalable bloom filter
-    pub fn new(error_tolerance: f32) -> Self {
-        let filters = vec![BloomFilter::new(STARTING_CAPACITY, error_tolerance)];
-        Self {
+    pub fn new(error_tolerance: f32) -> Result<Self, ErrCode> {
+        let initial_filter = BloomFilter::new(STARTING_CAPACITY, error_tolerance)?;
+        let filters = vec![initial_filter];
+        Ok(Self {
             error_tolerance,
             filters,
-        }
+        })
     }
 
     /// insert item into scalable bloom filter
-    pub fn insert<T: Hash>(&mut self, item: &T) -> StatusCode {
+    pub fn insert<T: Hash>(&mut self, item: &T) -> Result<(), ErrCode> {
         let i = self.filters.len();
         let curr_filter = &mut self.filters[i - 1];
-
         match curr_filter.insert(item) {
-            StatusCode::FULL => {
-                self.filters.push(BloomFilter::new(
-                    STARTING_CAPACITY * ((i + 1) as u128),
-                    self.error_tolerance / ((i + 1) as f32),
-                ));
-                return self.insert(item);
-            }
-            StatusCode::SUCCESS => (),
+            Ok(_) => Ok(()),
+            Err(e) => match e {
+                ErrCode::Full => {
+                    let new_filter = BloomFilter::new(
+                        STARTING_CAPACITY * ((i + 1) as u128),
+                        self.error_tolerance / ((i + 1) as f32),
+                    )?;
+                    self.filters.push(new_filter);
+                    self.insert(item)
+                }
+                _ => Err(e),
+            },
         }
-        StatusCode::SUCCESS
     }
 
     /// check if item is present scalable bloom filter
@@ -54,17 +57,17 @@ mod tests {
 
     #[test]
     fn test_new_creates_scalable_filter() {
-        let sbf = ScalableBloomFilter::new(0.01);
+        let sbf = ScalableBloomFilter::new(0.01).unwrap();
         assert_eq!(sbf.error_tolerance, 0.01);
         assert_eq!(sbf.filters.len(), 1);
     }
 
     #[test]
     fn test_insert_and_check_present() {
-        let mut sbf = ScalableBloomFilter::new(0.01);
+        let mut sbf = ScalableBloomFilter::new(0.01).unwrap();
         let items = vec!["apple", "banana", "cherry", "date", "elderberry"];
         for item in &items {
-            sbf.insert(item);
+            sbf.insert(item).unwrap();
         }
         for item in &items {
             assert!(sbf.is_present(item), "Expected '{}' to be present", item);
@@ -73,7 +76,7 @@ mod tests {
 
     #[test]
     fn test_empty_filter_reports_not_present() {
-        let sbf = ScalableBloomFilter::new(0.01);
+        let sbf = ScalableBloomFilter::new(0.01).unwrap();
         assert!(!sbf.is_present("hello"));
         assert!(!sbf.is_present(42));
         assert!(!sbf.is_present(""));
@@ -81,9 +84,9 @@ mod tests {
 
     #[test]
     fn test_no_false_negatives() {
-        let mut sbf = ScalableBloomFilter::new(0.01);
+        let mut sbf = ScalableBloomFilter::new(0.01).unwrap();
         for i in 0..500 {
-            sbf.insert(&i);
+            sbf.insert(&i).unwrap();
         }
         for i in 0..500 {
             assert!(
@@ -96,10 +99,10 @@ mod tests {
 
     #[test]
     fn test_scales_beyond_starting_capacity() {
-        let mut sbf = ScalableBloomFilter::new(0.01);
+        let mut sbf = ScalableBloomFilter::new(0.01).unwrap();
         // Insert more than STARTING_CAPACITY (10,000) items to force scaling
         for i in 0..10_001u64 {
-            sbf.insert(&i);
+            sbf.insert(&i).unwrap();
         }
         assert!(
             sbf.filters.len() > 1,
@@ -118,10 +121,10 @@ mod tests {
 
     #[test]
     fn test_second_filter_has_tighter_error_tolerance() {
-        let mut sbf = ScalableBloomFilter::new(0.10);
+        let mut sbf = ScalableBloomFilter::new(0.10).unwrap();
         // Fill up the first filter to force a second one
         for i in 0..10_001u64 {
-            sbf.insert(&i);
+            sbf.insert(&i).unwrap();
         }
         assert!(sbf.filters.len() >= 2);
         let first_error = sbf.filters[0].get_error_tolerance();
@@ -136,9 +139,9 @@ mod tests {
 
     #[test]
     fn test_second_filter_has_larger_capacity() {
-        let mut sbf = ScalableBloomFilter::new(0.10);
+        let mut sbf = ScalableBloomFilter::new(0.10).unwrap();
         for i in 0..10_001u64 {
-            sbf.insert(&i);
+            sbf.insert(&i).unwrap();
         }
         assert!(sbf.filters.len() >= 2);
         let first_cap = sbf.filters[0].get_capacity();
@@ -152,18 +155,18 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_returns_success() {
-        let mut sbf = ScalableBloomFilter::new(0.01);
+    fn test_insert_returns_ok() {
+        let mut sbf = ScalableBloomFilter::new(0.01).unwrap();
         let result = sbf.insert(&"test");
-        assert!(matches!(result, StatusCode::SUCCESS));
+        assert!(result.is_ok());
     }
 
     #[test]
     fn test_insert_different_types() {
-        let mut sbf = ScalableBloomFilter::new(0.01);
-        sbf.insert(&42u64);
-        sbf.insert(&"hello");
-        sbf.insert(&vec![1, 2, 3]);
+        let mut sbf = ScalableBloomFilter::new(0.01).unwrap();
+        sbf.insert(&42u64).unwrap();
+        sbf.insert(&"hello").unwrap();
+        sbf.insert(&vec![1, 2, 3]).unwrap();
         assert!(sbf.is_present(42u64));
         assert!(sbf.is_present("hello"));
         assert!(sbf.is_present(vec![1, 2, 3]));
@@ -171,10 +174,10 @@ mod tests {
 
     #[test]
     fn test_duplicate_inserts_increment_count() {
-        let mut sbf = ScalableBloomFilter::new(0.01);
-        sbf.insert(&"duplicate");
-        sbf.insert(&"duplicate");
-        sbf.insert(&"duplicate");
+        let mut sbf = ScalableBloomFilter::new(0.01).unwrap();
+        sbf.insert(&"duplicate").unwrap();
+        sbf.insert(&"duplicate").unwrap();
+        sbf.insert(&"duplicate").unwrap();
         assert!(sbf.is_present("duplicate"));
         // Each insert increments the counter regardless of duplicates
         assert_eq!(sbf.filters[0].get_num_inserts(), 3);
@@ -182,9 +185,9 @@ mod tests {
 
     #[test]
     fn test_not_present_for_missing_items() {
-        let mut sbf = ScalableBloomFilter::new(0.05);
+        let mut sbf = ScalableBloomFilter::new(0.05).unwrap();
         for i in 0..100 {
-            sbf.insert(&format!("inserted_{}", i));
+            sbf.insert(&format!("inserted_{}", i)).unwrap();
         }
         let mut false_positives = 0;
         for i in 0..1000 {
@@ -203,10 +206,10 @@ mod tests {
 
     #[test]
     fn test_no_false_negatives_across_multiple_filters() {
-        let mut sbf = ScalableBloomFilter::new(0.01);
+        let mut sbf = ScalableBloomFilter::new(0.01).unwrap();
         // Insert enough to span multiple inner filters
         for i in 0..25_000u64 {
-            sbf.insert(&i);
+            sbf.insert(&i).unwrap();
         }
         assert!(
             sbf.filters.len() >= 2,
@@ -225,8 +228,8 @@ mod tests {
 
     #[test]
     fn test_single_item() {
-        let mut sbf = ScalableBloomFilter::new(0.01);
-        sbf.insert(&"only_item");
+        let mut sbf = ScalableBloomFilter::new(0.01).unwrap();
+        sbf.insert(&"only_item").unwrap();
         assert!(sbf.is_present("only_item"));
         assert!(!sbf.is_present("other_item"));
     }
