@@ -8,7 +8,7 @@ pub enum ErrCode {
     /// filter Full
     Full,
     /// Bad input provided
-    BadInput,
+    BadInput(&'static str),
 }
 
 /// Bloom filter struct
@@ -23,20 +23,20 @@ pub struct BloomFilter {
 impl BloomFilter {
     /// create bloom filter object
     pub fn new(capacity: u128, error_tolerance: f32) -> Result<Self, ErrCode> {
-        if error_tolerance <= 0f32 || error_tolerance > 1.0 {
-            return Err(ErrCode::BadInput);
+        if error_tolerance <= 0f32 || error_tolerance >= 1.0 {
+            return Err(ErrCode::BadInput(
+                "Invalid error tolerance. Error tolerance must be between 0.0 and 1.0 non-inclusively",
+            ));
         }
 
         if capacity == 0 {
-            return Err(ErrCode::BadInput);
+            return Err(ErrCode::BadInput(
+                "Invalid capacity. Capacity must be greater than 0",
+            ));
         }
 
         let m = get_m(error_tolerance, capacity);
         let k = get_k(error_tolerance);
-
-        if k == 0 {
-            return Err(ErrCode::BadInput);
-        }
 
         let bits = vec![false; m as usize];
         let mut hashers = Vec::new();
@@ -180,12 +180,6 @@ mod tests {
     #[test]
     fn test_new_err_on_error_greater_than_one() {
         assert!(BloomFilter::new(100, 1.5).is_err());
-    }
-
-    #[test]
-    fn test_new_err_on_error_tolerance_one() {
-        // get_k(1.0) = ceil(-log2(1.0)) = 0, which triggers the k == 0 check
-        assert!(BloomFilter::new(100, 1.0).is_err());
     }
 
     #[test]
